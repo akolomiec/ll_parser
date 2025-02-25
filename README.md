@@ -49,6 +49,7 @@ _(Если файла `requirements.txt` нет, установите вручн
 pip install requests lxml pandas
 ```
 
+
 ### 4️⃣ **Запустите парсер**  
 ```bash
 python main.py

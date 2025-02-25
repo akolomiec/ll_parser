@@ -1,127 +1,172 @@
 import requests
 from lxml import html
 import pandas as pd
-import time
 import json
 import random
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Semaphore
 
-# Пути к файлам и настройки
+# Пути к файлам
 USER_AGENT_FILE = "useragent.txt"
+PROXY_FILE = "proxies.txt"
 CSV_FILE = "catalog.csv"
 LOG_FILE = "parser.log"
 
-# URL для получения последней страницы каталога
+# URL каталога
 CATALOG_URL = "https://liniilubvi.ru/catalog/"
 
-# Настройка логирования
+
+# Количество потоков
+TOTAL_THREADS = 2
+
+# Настройка логов
 logging.basicConfig(
-    level=logging.INFO,  # Записываем INFO, WARNING и ERROR
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),  # Лог в файл
-        logging.StreamHandler()  # Вывод в консоль
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler()
     ]
 )
 
-def load_user_agents(filename=USER_AGENT_FILE):
-    """Загружает список User-Agent из JSON-файла"""
+def load_user_agents():
+    """Загружает список User-Agent из JSON."""
     try:
-        with open(filename, "r", encoding="utf-8") as f:
-            ua_list = json.load(f)
-            logging.info(f"✅ Загружено {len(ua_list)} User-Agent'ов")
-            return [ua["ua"] for ua in ua_list]  # Достаем только строки с User-Agent
+        with open(USER_AGENT_FILE, "r", encoding="utf-8") as f:
+            agents = json.load(f)
+            return [ua["ua"] for ua in agents]  # Берем только строки User-Agent
     except Exception as e:
-        logging.error(f"❌ Ошибка загрузки user-agent'ов: {e}")
-        return ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.3"]  # Запасной UA
+        logging.error(f"❌ Ошибка загрузки User-Agent: {e}")
+        return ["Mozilla/5.0"]  # Запасной вариант, если файл сломан
 
-def get_random_user_agent(ua_list):
-    """Выбирает случайный User-Agent из списка"""
-    return random.choice(ua_list)
+def get_random_user_agent():
+    """Выбирает случайный User-Agent из списка."""
+    return random.choice(user_agents)
 
-# Загружаем список User-Agent'ов один раз при старте
+
+def load_proxies():
+    """Загружает список прокси"""
+    try:
+        with open(PROXY_FILE, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        logging.error(f"❌ Ошибка загрузки прокси: {e}")
+        return []
+
+def get_random_user_agent():
+    """Выбирает случайный User-Agent"""
+    return random.choice(user_agents)
+
+def get_random_proxy():
+    """Выбирает случайный прокси (если есть)"""
+    return random.choice(proxies) if proxies else None
+
+# Загружаем данные
 user_agents = load_user_agents()
+proxies = load_proxies()
+
 
 def get_last_page():
-    """Определяет количество страниц в каталоге"""
-    headers = {"User-Agent": get_random_user_agent(user_agents)}
+    """Определяет количество страниц"""
+    headers = {"User-Agent": get_random_user_agent()}
+    proxy = get_random_proxy()
+    proxy_dict = {"http": proxy, "https": proxy} if proxy else {}
 
-    logging.info(f"🌐 Запрашиваем {CATALOG_URL} для определения количества страниц")
+    logging.info(f"🌐 Определяем количество страниц на {CATALOG_URL}")
+
     try:
-        response = requests.get(CATALOG_URL, headers=headers)
+        response = requests.get(CATALOG_URL, headers=headers, proxies=proxy_dict, timeout=10)
         response.raise_for_status()
     except requests.RequestException as e:
-        logging.error(f"❌ Ошибка запроса {CATALOG_URL}: {e}")
+        logging.error(f"❌ Ошибка запроса: {e}")
         return 1
 
     tree = html.fromstring(response.content)
-    page_numbers = tree.xpath('//*[@id="content"]/div[2]/div[4]/div/section/div[3]/div[2]/div/a/text()')
+
+    # Находим все элементы пагинации и извлекаем номер страницы
+    page_numbers = tree.xpath('//a[contains(@href, "?PAGEN_1=")]/text()')
+
+    # Фильтруем и извлекаем только числа
     page_numbers = [int(num) for num in page_numbers if num.isdigit()]
 
     last_page = max(page_numbers) if page_numbers else 1
-    logging.info(f"📌 Определено количество страниц: {last_page}")
+    logging.info(f"📌 Найдено страниц: {last_page}")
     return last_page
 
-def parse_catalog_page(page_num):
+
+def parse_catalog_page(page_num, proxy):
+    """Парсит одну страницу каталога"""
     url = f"{CATALOG_URL}?PAGEN_1={page_num}"
-    ua = get_random_user_agent(user_agents)
-    print(f"📢 Используется User-Agent: {ua}")
-    headers = {"User-Agent": ua}
+    headers = {"User-Agent": get_random_user_agent()}
+    proxy_dict = {"http": proxy, "https": proxy} if proxy else {}
 
-    response = requests.get(url, headers=headers)
-    content = response.content.decode('utf-8')
+    logging.info(f"🌍 Парсим страницу {page_num} через {proxy}")
 
-
-    if response.status_code != 200:
-        print(f"❌ Ошибка {response.status_code} при запросе {url}")
+    try:
+        response = requests.get(url, headers=headers, proxies=proxy_dict, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logging.error(f"❌ Ошибка при запросе {url}: {e}")
         return []
-
+    content = response.content.decode('utf-8')
     tree = html.fromstring(content)
     items = []
 
-    for i in range(1, 21):
-        try:
-            # Гибкий XPath: ищем внутри блока с названием товара
-            name_xpath = f'//*[@id="catalog-list"]/a[{i}]//div[contains(@class, "carusel-wrap-line-center-item-list-item-name")]//span/text()'
-            name = tree.xpath(name_xpath)
+    # Новый XPath для товаров
+    products = tree.xpath('//a[contains(@class, "catalog-item") and contains(@class, "js-catalog-item")]')
 
-            # XPath для цены
-            price_xpath = f'//*[@id="catalog-list"]/a[{i}]//span[contains(@class, "carusel-wrap-line-center-item-list-item-price")]/text()'
-            price = tree.xpath(price_xpath)
+    for product in products:
+        try:
+            name = product.xpath('.//div[contains(@class, "carusel-wrap-line-center-item-list-item-name")]/span/text()')
+            price = product.xpath('.//span[contains(@class, "carusel-wrap-line-center-item-list-item-price")]/text()')
+            old_price = product.xpath('.//span[contains(@class, "carusel-wrap-line-center-item-list-item-price-old")]/i/text()')
+            img_url = product.xpath('.//img[contains(@class, "first_img_s")]/@src')
+            product_url = product.xpath('.//@href')
 
             if name and price:
-                item = {"Название": name[0].strip(), "Цена": price[0].strip()}
+                item = {
+                    "Название": name[0].strip(),
+                    "Цена": price[0].strip(),
+                    "Старая цена": old_price[0].strip() if old_price else "Нет старой цены",
+                    "Изображение": img_url[0] if img_url else "Нет изображения",
+                    "Ссылка": product_url[0] if product_url else "Нет ссылки"
+                }
                 items.append(item)
-                print(f"✅ Найден товар: {item}")
-            else:
-                print(f"⚠ Пропущен элемент {i}: не удалось извлечь данные")
+                logging.info(f"✅ Найден товар: {item}")
 
         except Exception as e:
-            print(f"❌ Ошибка при обработке элемента {i}: {e}")
+            logging.error(f"❌ Ошибка парсинга товара: {e}")
 
     return items
 
 
 def parse_all_pages():
-    """Парсит все страницы каталога"""
+    """Парсит все страницы в многопотоке"""
     last_page = get_last_page()
-    logging.info(f"📌 Начинаем парсинг {last_page} страниц")
+    logging.info(f"📌 Начинаем парсинг {last_page} страниц с {TOTAL_THREADS} потоками")
 
     all_items = []
-    for page in range(1, last_page + 1):
-        logging.info(f"📥 Парсим страницу {page} из {last_page}...")
-        items = parse_catalog_page(page)
-        all_items.extend(items)
-        time.sleep(random.uniform(1, 3))  # Случайная задержка для защиты от блокировки
+    with ThreadPoolExecutor(max_workers=TOTAL_THREADS) as executor:
+        future_to_page = {executor.submit(parse_catalog_page, page, get_random_proxy()): page for page in range(1, last_page + 1)}
+
+        for future in as_completed(future_to_page):
+            page = future_to_page[future]
+            try:
+                items = future.result()
+                all_items.extend(items)
+                logging.info(f"📄 Страница {page} обработана, товаров: {len(items)}")
+            except Exception as e:
+                logging.error(f"❌ Ошибка на странице {page}: {e}")
 
     logging.info(f"✅ Парсинг завершен. Всего товаров собрано: {len(all_items)}")
     return all_items
 
-def save_to_csv(data, filename=CSV_FILE):
-    """ Сохраняем данные в CSV с правильной кодировкой """
+def save_to_csv(data):
+    """Сохраняет в CSV"""
     df = pd.DataFrame(data)
-    df.to_csv(filename, sep = ';', encoding='cp1251')
-    logging.info(f"📂 Данные сохранены в {filename}")
+    df.to_csv(CSV_FILE, sep=";", encoding="cp1251", index=False)
+    logging.info(f"📂 Данные сохранены в {CSV_FILE}")
 
 if __name__ == "__main__":
     logging.info("🚀 Запуск парсера")
