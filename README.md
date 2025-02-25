@@ -98,7 +98,7 @@ time.sleep(2)  # Задержка 2 секунды
 
 ## ❓ **Контакты и поддержка**  
 Если у вас есть вопросы или предложения, свяжитесь с нами:  
-📧 Email: your-email@example.com  
-🔗 GitHub: [your-repo](https://github.com/your-repo)  
+📧 Email: protechnologii22@yandex.ru  
+🔗 GitHub: [ll_parser](https://github.com/akolomiec/ll_parser)  
 
 🚀 **Удачного парсинга!** 😊
