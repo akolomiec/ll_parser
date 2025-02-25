@@ -118,10 +118,9 @@ def parse_all_pages():
     return all_items
 
 def save_to_csv(data, filename=CSV_FILE):
-    """Сохраняет данные в CSV"""
-    # Сохраняем данные в CSV с правильной кодировкой
+    """ Сохраняем данные в CSV с правильной кодировкой """
     df = pd.DataFrame(data)
-    df.to_csv(filename)
+    df.to_csv(filename, sep = ';', encoding='cp1251')
     logging.info(f"📂 Данные сохранены в {filename}")
 
 if __name__ == "__main__":
