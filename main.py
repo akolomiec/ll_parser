@@ -69,11 +69,14 @@ def parse_catalog_page(page_num):
     headers = {"User-Agent": ua}
 
     response = requests.get(url, headers=headers)
+    content = response.content.decode('utf-8')
+
+
     if response.status_code != 200:
         print(f"❌ Ошибка {response.status_code} при запросе {url}")
         return []
 
-    tree = html.fromstring(response.content)
+    tree = html.fromstring(content)
     items = []
 
     for i in range(1, 21):
@@ -118,7 +121,7 @@ def save_to_csv(data, filename=CSV_FILE):
     """Сохраняет данные в CSV"""
     # Сохраняем данные в CSV с правильной кодировкой
     df = pd.DataFrame(data)
-    df.to_csv(filename, index=False, encoding="utf-8-sig")
+    df.to_csv(filename)
     logging.info(f"📂 Данные сохранены в {filename}")
 
 if __name__ == "__main__":
